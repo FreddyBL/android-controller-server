@@ -3,16 +3,7 @@ import Ready from "@serialport/parser-ready";
 import { commands, units } from "./constants.js";
 
 import { StringPinModes } from "./constants.js";
-
-const msgStartByte = 48;
-const arduinoPort = "COM4"; //Will retrieve from app later.
-
-export const sport = new SerialPort(arduinoPort, { autoOpen: true });
-export const parser = sport.pipe(new Ready({ delimiter: "READY" }));
-
-sport.on("close", () => {
-  console.log("[Server] Connection to Arduino lost.");
-});
+import { app } from "./express-server.js";
 
 function writeBytes(sport, bytes) {
   const len = bytes.length;
@@ -36,7 +27,7 @@ export const writeArduinoCmd = (pin, cmd, value = 0) => {
   argsBytes.forEach((byte) => {
     bytes.push(byte);
   });
-  writeBytes(sport, bytes);
+  writeBytes(app.locals.sport, bytes);
 };
 
 export const turnOn = (pin) => {

@@ -1,6 +1,11 @@
+//Need to refactor code
+
 import WebSocket from "ws";
 import aJSON_Parse from "async-json-parse";
 import dotenv from "dotenv";
+import Ready from "@serialport/parser-ready";
+import express from "express";
+
 dotenv.config();
 
 import "./arduino.js";
@@ -18,22 +23,49 @@ import {
 } from "./arduino.js";
 import SerialPort from "serialport";
 import { Pin } from "./Pin.js";
-import { parser } from "./arduino.js";
+import { parser, sport, isArduinoConnected, arduinoCOM } from "./global.js";
 import { BroadcastEvent } from "./broadcaster.js";
+import { serialCOMExists } from "./serial.js";
 
+import { app } from "./express-server.js";
 const totalPins = 13;
 export let PinStore = [];
 for (let i = 0; i < totalPins; i++) {
   PinStore.push(new Pin(i));
 }
 
+app.use(
+  express.json({
+    limit: "30mb",
+    extended: true,
+  })
+);
+
+app.locals.isArduinoConnected = false;
+app.locals.arduinoCOM = null;
+app.locals.sport = null;
+app.locals.parser = null;
+
+app.use(
+  express.urlencoded({
+    limit: "30mb",
+    extended: true,
+  })
+);
+
+app.listen(process.env.HTTP_PORT, () => {
+  console.log(
+    `[Server] Express Server us running on port ${process.env.HTTP_PORT} `
+  );
+});
+
 const serverAddress = process.env.HOST;
-const serverPort = process.env.PORT;
+const wsocketPort = process.env.PORT;
 
 let clientList = new Set();
 const wss = new WebSocket.Server({
   host: serverAddress,
-  port: serverPort,
+  port: wsocketPort,
 });
 
 wss.binaryType = "arraybuffer";
@@ -46,13 +78,15 @@ wss.on("connection", (ws) => {
   broadcaster.addClient(ws);
   broadcaster.sendAllSettings(ws, PinStore);
   ws.on("message", (msg) => {
-    try {
-      aJSON_Parse(msg).then((msg) => {
-        const { type, payload } = msg;
-        onMessage(ws, type, payload);
-      });
-    } catch (error) {
-      console.log(error);
+    if (app.locals.isArduinoConnected) {
+      try {
+        aJSON_Parse(msg).then((msg) => {
+          const { type, payload } = msg;
+          onMessage(ws, type, payload);
+        });
+      } catch (error) {
+        console.log(error);
+      }
     }
   });
   ws.on("close", () => {
@@ -73,10 +107,6 @@ function onMessage(ws, type, payload) {
       break;
     }
     case "arduino/cmd": {
-      BroadcastEvent.emit("receivedArduinoCommand", {
-        ws,
-        payload,
-      });
       const { pinId, cmd } = payload;
       switch (cmd) {
         case "ON": {
@@ -110,6 +140,7 @@ function onMessage(ws, type, payload) {
           break;
         }
       }
+      broadcaster.broadcastConfig(ws, PinStore);
     }
   }
 }
@@ -120,7 +151,66 @@ export const initializeArduinoPins = () => {
   }
 };
 
-parser.on("ready", () => {
-  console.log("[Server] Connection to Arduino established.");
-  initializeArduinoPins();
+const msgStartByte = 48;
+
+app.get("/is-arduino-connected", async (req, res) => {
+  res.status(200).json({
+    value: app.locals.isArduinoConnected,
+  });
+});
+
+app.put("/connect-to-arduino", async (req, res) => {
+  const { path } = req.body;
+  if (app.locals.isArduinoConnected) {
+    res.status(400).json({
+      error: {
+        message: `Arduino is already connected on COM: ${app.locals.arduinoCOM}`,
+      },
+    });
+    return;
+  }
+
+  try {
+    const exists = await serialCOMExists(path);
+    if (!exists) {
+      return res.status(404).json({
+        error: {
+          message: "COM port specified does not exist or is unavailable.",
+        },
+      });
+    }
+
+    app.locals.arduinoCOM = path;
+    app.locals.sport = new SerialPort(app.locals.arduinoCOM, {
+      autoOpen: true,
+    });
+    app.locals.parser = app.locals.sport.pipe(
+      new Ready({ delimiter: "READY" })
+    );
+    app.locals.sport.on("close", () => {
+      console.log("[Server] Connection to Arduino lost.");
+      app.locals.isArduinoConnected = false;
+      console.log("[Server] Broadcasting messaage to all clients...");
+      broadcaster.sendAllMessage("arduino-closed");
+    });
+
+    app.locals.parser.on("ready", () => {
+      console.log("[Server] Connection to Arduino established.");
+      app.locals.isArduinoConnected = true;
+      initializeArduinoPins(app.locals.sport);
+    });
+
+    res.status(200).json({
+      success: true,
+    });
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+app.get("/list-ports", async (req, res) => {
+  const ports = await SerialPort.list();
+  res.status(200).json({
+    value: ports,
+  });
 });
