@@ -16,7 +16,6 @@ export class Broadcaster {
     sendMessage(ws, "initialSettings", settings);
   }
   broadcastConfig(exclude_ws, settings) {
-    console.log("Broadcasting...");
     this.clientList.forEach((value1, value2, set) => {
       if (value1 !== exclude_ws) {
         sendMessage(value1, "initialSettings", settings); // probably a bad idea if someone is moving a slider
