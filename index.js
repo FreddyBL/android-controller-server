@@ -59,8 +59,8 @@ app.listen(process.env.HTTP_PORT, () => {
   );
 });
 
-const serverAddress = process.env.HOST;
-const wsocketPort = process.env.PORT;
+const serverAddress = process.env.SERVER_IP;
+const wsocketPort = process.env.WSOCKET_PORT;
 
 let clientList = new Set();
 const wss = new WebSocket.Server({
